@@ -1,0 +1,50 @@
+name: Account Fingerprint
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fingerprint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fingerprint configured WorkBuddy identity
+        env:
+          WORKBUDDY_ACCESS_TOKEN: ${{ secrets.WORKBUDDY_ACCESS_TOKEN }}
+        run: |
+          python - <<'PY'
+          import base64
+          import hashlib
+          import json
+          import os
+          import re
+
+          token = os.environ["WORKBUDDY_ACCESS_TOKEN"].strip()
+          if token.startswith("{"):
+              data = json.loads(token)
+              auth = data.get("auth", {})
+              token = str(auth.get("refreshToken") or auth.get("accessToken") or "")
+
+          parts = token.split(".")
+          claims = {}
+          if len(parts) == 3:
+              payload = parts[1] + "=" * (-len(parts[1]) % 4)
+              claims = json.loads(base64.urlsafe_b64decode(payload))
+
+          def digest(value):
+              text = value if isinstance(value, str) else json.dumps(value, sort_keys=True)
+              return hashlib.sha256(text.encode()).hexdigest()
+
+          identity = {}
+          for key, value in claims.items():
+              if re.search(r"uid|user|account|sub|uin|oneid", key, re.I):
+                  identity[key] = digest(value)
+
+          print(json.dumps({
+              "token_sha256": digest(token),
+              "identity_claim_hashes": identity,
+              "claim_keys": sorted(claims.keys()),
+          }, ensure_ascii=False, sort_keys=True))
+          PY
